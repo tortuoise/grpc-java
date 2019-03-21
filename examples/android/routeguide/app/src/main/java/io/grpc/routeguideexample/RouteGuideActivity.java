@@ -17,6 +17,8 @@
 package io.grpc.routeguideexample;
 
 import android.content.Context;
+import android.location.Location;
+import android.location.LocationManager;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
@@ -32,6 +34,8 @@ import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
 import io.grpc.routeguideexample.RouteGuideGrpc.RouteGuideBlockingStub;
 import io.grpc.routeguideexample.RouteGuideGrpc.RouteGuideStub;
+import io.grpc.routeguideexample.TracGrpc.TracBlockingStub;
+import io.grpc.routeguideexample.TracGrpc.TracStub;
 import io.grpc.stub.StreamObserver;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -53,8 +57,13 @@ public class RouteGuideActivity extends AppCompatActivity {
   private Button listFeaturesButton;
   private Button recordRouteButton;
   private Button routeChatButton;
+  private Button getLastButton;
+  private Button postLastButton;
   private TextView resultText;
   private ManagedChannel channel;
+  public static double latitude;
+  public static double longitude;
+  public static double altitude;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -68,9 +77,22 @@ public class RouteGuideActivity extends AppCompatActivity {
     listFeaturesButton = (Button) findViewById(R.id.list_features_button);
     recordRouteButton = (Button) findViewById(R.id.record_route_button);
     routeChatButton = (Button) findViewById(R.id.route_chat_button);
+    getLastButton = (Button) findViewById(R.id.get_last_button);
+    postLastButton = (Button) findViewById(R.id.post_last_button);
     resultText = (TextView) findViewById(R.id.result_text);
     resultText.setMovementMethod(new ScrollingMovementMethod());
     disableButtons();
+    LocationManager locationManager;
+    Location location;
+    locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+    if (locationManager != null) {
+        location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+    if (location != null) {
+        latitude = location.getLatitude();
+        longitude = location.getLongitude();
+        altitude = location.getAltitude();
+    }
+    }
   }
 
   public void startRouteGuide(View view) {
@@ -118,6 +140,18 @@ public class RouteGuideActivity extends AppCompatActivity {
     new GrpcTask(new RouteChatRunnable(), channel, this).execute();
   }
 
+  public void getLast(View view) {
+    setResultText("");
+    disableButtons();
+    new GrpcTask1(new GetLastRunnable(), channel, this).execute();
+  }
+
+  public void postLast(View view) {
+    setResultText("");
+    disableButtons();
+    new GrpcTask1(new PostRunnable(), channel, this).execute();
+  }
+
   private void setResultText(String text) {
     resultText.setText(text);
   }
@@ -128,6 +162,8 @@ public class RouteGuideActivity extends AppCompatActivity {
     recordRouteButton.setEnabled(false);
     routeChatButton.setEnabled(false);
     exitRouteGuideButton.setEnabled(false);
+    getLastButton.setEnabled(false);
+    postLastButton.setEnabled(false);
   }
 
   private void enableButtons() {
@@ -136,6 +172,8 @@ public class RouteGuideActivity extends AppCompatActivity {
     listFeaturesButton.setEnabled(true);
     recordRouteButton.setEnabled(true);
     routeChatButton.setEnabled(true);
+    getLastButton.setEnabled(true);
+    postLastButton.setEnabled(true);
   }
 
   private static class GrpcTask extends AsyncTask<Void, Void, String> {
@@ -445,5 +483,100 @@ public class RouteGuideActivity extends AppCompatActivity {
         .setMessage(message)
         .setLocation(Point.newBuilder().setLatitude(lat).setLongitude(lon).build())
         .build();
+  }
+
+  private static class GrpcTask1 extends AsyncTask<Void, Void, String> {
+    private final GrpcRunnable1 grpcRunnable;
+    private final ManagedChannel channel;
+    private final WeakReference<RouteGuideActivity> activityReference;
+
+    GrpcTask1(GrpcRunnable1 grpcRunnable, ManagedChannel channel, RouteGuideActivity activity) {
+      this.grpcRunnable = grpcRunnable;
+      this.channel = channel;
+      this.activityReference = new WeakReference<RouteGuideActivity>(activity);
+    }
+
+    @Override
+    protected String doInBackground(Void... nothing) {
+      try {
+        String logs =
+            grpcRunnable.run(
+                TracGrpc.newBlockingStub(channel), TracGrpc.newStub(channel));
+        return "Success!\n" + logs;
+      } catch (Exception e) {
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        e.printStackTrace(pw);
+        pw.flush();
+        return "Failed... :\n" + sw;
+      }
+    }
+
+    @Override
+    protected void onPostExecute(String result) {
+      RouteGuideActivity activity = activityReference.get();
+      if (activity == null) {
+        return;
+      }
+      activity.setResultText(result);
+      activity.enableButtons();
+    }
+  }
+
+  private interface GrpcRunnable1 {
+    /** Perform a grpcRunnable and return all the logs. */
+    String run(TracBlockingStub blockingStub, TracStub asyncStub) throws Exception;
+  }
+
+  private static class GetLastRunnable implements GrpcRunnable1 {
+    @Override
+    public String run(TracBlockingStub blockingStub, TracStub asyncStub)
+        throws Exception {
+      return getLast(blockingStub);
+    }
+    private String getLast(TracBlockingStub blockingStub)
+        throws StatusRuntimeException {
+      StringBuffer logs = new StringBuffer();
+      appendLogs(logs, "*** GetLast: ");
+
+      CoordinateRequest request = CoordinateRequest.newBuilder().setUser(1).setId(1).build();
+
+      Coordinate coordinate;
+      coordinate = blockingStub.getLast(request);
+      appendLogs(
+        logs,
+        "Last coordinate at \"{0}\" at {1}, {2}",
+        coordinate.getAltitude(),
+        coordinate.getPoint().getLatitude(),
+        coordinate.getPoint().getLongitude());
+      return logs.toString();
+    }
+  }
+
+  private static class PostRunnable implements GrpcRunnable1 {
+    @Override
+    public String run(TracBlockingStub blockingStub, TracStub asyncStub)
+        throws Exception {
+      return postLast(blockingStub);
+    }
+    private String postLast(TracBlockingStub blockingStub)
+        throws StatusRuntimeException {
+      StringBuffer logs = new StringBuffer();
+      appendLogs(logs, "*** Post: ");
+
+      Point point = Point.newBuilder().setLatitude((int)latitude).setLongitude((int)longitude).build();
+      Coordinate coordinate = Coordinate.newBuilder().setAltitude((float)altitude).setPoint(point).build();
+      WrappedCoordinate request = WrappedCoordinate.newBuilder().setUser(1).setCoord(coordinate).build();
+
+      com.google.protobuf.Empty empty;
+      empty = blockingStub.post(request);
+      appendLogs(
+        logs,
+        "Posted \"{0}\" at {1}, {2}",
+        coordinate.getAltitude(),
+        coordinate.getPoint().getLatitude(),
+        coordinate.getPoint().getLongitude());
+      return logs.toString();
+    }
   }
 }

@@ -289,7 +289,7 @@ subprojects {
     if (JavaVersion.current().isJava10Compatible()) {
         allprojects {
             tasks.withType(Javadoc) {
-                options.addBooleanOption('html4', true)
+                //options.addBooleanOption('html4', true)
             }
         }
     }
